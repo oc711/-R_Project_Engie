@@ -247,7 +247,7 @@ Nous constatons que l'erreur de prédiction reste relativement grande en passant
 En raison de la multicolinéarité de ce jeu de données, il est difficile d'obtenir un bon modèle par des algorithmes de régression. J'ai aussi essayé d'autres algorithmes telles que:
 
 
-- randomForest: (library **randomForest**): 
+- RandomForest: (library **randomForest**): 
   mais pour ce faire, il demande une allocation de mémoire supérieur à la capacité de ma machine, donc j'ai eu le message d'erreur: *cannot allocate vector of size 3.7 Gb*
 
 - Decision tree: (library **c50**): 
