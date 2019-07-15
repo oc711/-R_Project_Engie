@@ -1,0 +1,487 @@
+---
+title: Rapport du projet d'ADD
+subtitle: Aidez ENGIE à améliorer la production d'électricité éolienne!
+author: LI Dimeng & LI Na
+date: Janvier 2019
+institute: Sorbonne Université Master 2 Ingénièrie mathématiques 
+output:
+  bookdown::pdf_document2:
+    fig_caption: yes
+    number_sections: yes
+    toc: yes
+linkcolor: red
+header-includes:
+- \usepackage[francais]{babel}
+- \usepackage{float}
+- \usepackage{booktabs}
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.align = 'center',fig.pos = 'H')
+#position par défaut des figures dans le pdf : centrées et à l'endroit où on les construit
+library(magrittr) #pour utiliser l'opérateur pipe %>%
+library(kableExtra) #pour améliorer les tableaux
+library(readr)#pour la lecture des données
+library(tidyverse)#pour l'analyse descriptive de base
+library(corrplot)#pour calculer la correlation
+library(gridExtra)#pour partager la fenêtre graphique avec ggplot2
+options(knitr.table.format = "latex")
+```
+
+
+#Présentation du projet 
+
+**Introduction**  
+
+Dans le cadre du cours Analyse des données, nous avons choisi un jeu de données sur le plateforme <<Challenge Data>> dans lequel nous allons utliser le principe de la régression linéaire afin de modéliser ce jeu de données.
+
+**Sujet:** Aidez ENGIE à améliorer la production d'électricité éolienne !
+
+Le Groupe ENGIE cherche à toujours mieux optimiser la production de chacune de ses éoliennes, et pour cela à détecter des écarts anormaux entre la production électrique attendue et la production réalisée. 
+ 
+ 
+**Objet du chanllenge**  
+
+L'objectif de ce projet est donc de modéliser le lien entre la puissance active de quatre éoliennes à partir de différents paramètres de fonctionnement mesurés par des capteurs installés dans ces éoliennes. Cependant, alors que des anémomètres sont installés sur les éoliennes et mesurent la vitesse du vent, les données qu'ils enregistrent sont souvent considérées comme peu fiables pour du suivi de performance compte tenu des perturbations générées par les pales de l'éolienne ; aussi, ce challenge vise à reconstituer la puissance active générée par une éolienne sans tenir compte de ces mesures directes de vitesse du vent.
+
+A partir de ce plateforme, nous disposons 3 fichiers: 
+
+* un fichier d'entrées d'entrainement ("input_training")
+* un fichier de sorties d'entrainement ("output_training")
+* un fichier d'entrées du test ("input_testing")
+
+
+#Etude préliminaire {#analyse}
+
+
+##Chargement des données {#chargement}
+
+
+```{r chargement training}
+rm(list=ls()) #ATTENTION : efface tout l'environnement global
+#chargement des donnees input_training
+input_training<-read.table(file="input_training.csv",header = TRUE, sep = ";")
+#chargement des donnees output_training
+output_training<-read.table(file="output_training.csv",header = TRUE, sep = ";")
+
+```
+
+```{r analyse preliminaire,include=FALSE}
+colnames(input_training)
+summary(input_training)
+
+colnames(output_training)
+summary(output_training)
+
+```
+
+Fusionnement des fichiers d'entrées et de sorties d'entrainement 
+```{r fusionnement par ID }
+training<-merge(input_training,output_training,by="ID")  
+
+```
+
+
+##Description du jeu de données {#Jeu}
+
+Le jeu de données que nous allons travailler avec est appelé \texttt{training}, il contient `r ncol(training)` variables avec chacune `r nrow(training)` observations:
+
++ Identifiant de chaque observation: "ID";
+
++ Identifiant de chaque éolienne: "MAC_CODE";
+
++ Nombre entier représentant les pas de temps 10 minutes: "Date_time" ;
+
+Les colonnes qui suivent correspondent :  
+
++ aux températures des composants des éoliennes, en degrés Celsius:    
+
+  "Gearbox_bearing_1_temperature", "Gearbox_bearing_2_temperature","Gearbox_inlet_temperature",   "Gearbox_oil_sump_temperature", "Generator_bearing_1_temperature", "Generator_bearing_2_temperature", "Generator_stator_temperature", "Hub_temperature", "Nacelle_temperature","Rotor_bearing_temperature";
+
++ aux informations électriques: "Grid_frequency", "Grid_voltage";
+
++ aux mesures liées à des composants en rotation:    
+  "Generator_converter_speed", "Generator_speed", "Rotor_speed";
+
++ aux mesures d'orientation:    
+  "Absolute_wind_direction", "Absolute_wind_direction_c", "Nacelle_angle", 
+  "Nacelle_angle_c", "Pitch_angle";
+
++ aux mesures météorologiques: "Outdoor_temperature"
+
+La dernière colonne corresponds à la variable cible Y, qui est la puissance active de chacune des quatre éoliennes: "TARGET".
+
+
+
+##Nettoyage et recodage de données {#nettoyage}
+
+La plupart (mais pas toutes) des variables X mentionnées ci-dessus se déclinent en réalité en quatre colonnes :
+
+* une colonne pour la **valeur moyenne** sur 10 minutes ;
+
+* une colonne pour la **valeur maximale** sur 10 minutes (suffixe '_max' dans le nom de colonne) ;
+
+* une colonne pour la **valeur minimale** sur 10 minutes (suffixe '_min' dans le nom de colonne) ;
+
+* une colonne pour **l'ecart type** sur 10 minutes (suffixe '_std' dans le nom de colonne).
+
+Les données sont enregistrées par un pas de temps de 10 minutes, donc, les variables pour les valeurs maximales, minimales et l'écart-type ne sont pas nécessaires puisqu'elles représentent des valeurs répétitives dans notre cas d'étude.  
+Ainsi, en vue d'un nombre important de variables, nous avons décidé de supprimer les variables "ID", "MAC_CODE", "Date_time" et les variables suffixées par '_max', '_min' et '_std'.
+
+Finalement, après la réduction des variables, on obtient un nouveau jeu de données contenant 22 variables avec chacune `r nrow(training)` données.
+
+```{r nettoyage}
+var_select<-c("Pitch_angle","Hub_temperature","Generator_converter_speed",
+              "Generator_speed","Generator_bearing_1_temperature",
+              "Generator_bearing_2_temperature","Generator_stator_temperature",
+              "Gearbox_bearing_1_temperature","Gearbox_bearing_2_temperature",
+              "Gearbox_inlet_temperature","Gearbox_oil_sump_temperature",
+              "Nacelle_angle","Nacelle_temperature","Absolute_wind_direction",
+              "Outdoor_temperature","Grid_frequency","Grid_voltage",
+              "Rotor_speed","Rotor_bearing_temperature",
+              "Absolute_wind_direction_c","Nacelle_angle_c","TARGET")
+training<-training%>%select(var_select)
+
+colnames(training)#verification
+
+```
+
+
+
+**Traitement des valeurs manquantes**
+
+Parmi les variables, il y a 5 variables qui contiennent des valeurs manquantes.  
+
+Les paramètres *Grid_voltage*,*Generator_converter_speed* et *Gearbox_inlet_temperature* contiennent chacun un nombre important de valeurs manquantes ce qui présente une proportion non négligeable, en moyenne 14% des données. Par conséquent, on applique une technique grossière consistant à remplacer les données manquantes par leurs médianes.
+ 
+```{r med_Grid_Voltage}
+med_Grid_Voltage<-median(training$Grid_voltage,na.rm=T) 
+
+```
+
+```{r traitement de Grid_Voltage }
+training$Grid_voltage[is.na(
+  training$Grid_voltage)]<-med_Grid_Voltage
+```
+
+
+```{r traitement de Generator_converter_speed }
+med_Generator_converter_speed <-median(
+  training$Generator_converter_speed,na.rm=T)#médiane
+training$Generator_converter_speed[is.na(
+  training$Generator_converter_speed)]<-med_Generator_converter_speed 
+```
+
+
+```{r traitement de Gearbox_inlet_temperature}
+med_Gearbox_inlet_temperature <-median(
+  training$Gearbox_inlet_temperature,na.rm=T)#médiane
+training$Gearbox_inlet_temperature[is.na(
+  training$Gearbox_inlet_temperature)]<-med_Gearbox_inlet_temperature 
+
+```
+
+Les paramètres *Absolute_wind_direction_c* et *Nacelle_angle_c* contiennent chacun 72 valeurs manquantes, donc peu de données. Nous avons décidé de supprimer les lignes pour lesquelles ces 2 champs sont manquants.
+
+```{r }
+training<-training%>%filter(!is.na(Absolute_wind_direction_c))
+training<-training%>%filter(!is.na(Nacelle_angle_c))
+```
+
+
+**Vérification**
+
+Un résumé numérique du jeu de données **training** est le suivant
+```{r training}
+summary(training)
+```
+
+##Analyse descriptive multivariée {#Analyse}
+
+**Coefficient de Pearson**
+Si le resultat de kappa() est supérieur à 1000, il s'agit d'une corrélation forte 
+```{r }
+corrmatrix<-cor(training,method = "pearson")
+kappa(corrmatrix,exact=TRUE) 
+
+```
+
+```{r corr,fig.cap="Graphe training - Matrice de correlation  ",echo=FALSE}
+
+rownames(corrmatrix) = paste(1:ncol(training), names(training),sep = ' ') #changer le nom des lignes en <num-varibale>
+colnames(corrmatrix) = as.character(1:ncol(training)) #changer le nom des colonnes en num
+col3 <- colorRampPalette(c('DodgerBlue3','white', "red2")) # focntion col3 qui parametrer la figure
+corrplot(corrmatrix, method = 'circle', diag = F, type = 'full', outline = F,
+    col = col3(20), cl.lim = c(-1,1),addgrid.col = NA, 
+    tl.pos = 'lb',tl.cex = 0.75, tl.col = 'black', tl.srt = 0, tl.offset = 0.5) 
+axis(1,at = 1:22, labels = NA, pos = 22.5, tck = -0.01) 
+axis(4,at = 1:22, labels = NA, pos = 0.5, tck = -0.01) 
+```
+
+D'après le tableau de corrélation ci-dessus, on observe que
+
+- les variables correspondent aux températures sont très corrélées positivement entre elles;
+
+- les variables correspondent aux informations électriques *Grid_frequency* et *Grid_voltage* sont indépendantes des autres variables;
+
+- les variables correspondent aux mesures d'orientation *Absolute_wind_direction*, *Absolute_wind_direction_c*, *Narcelle_angle* et  *Narcelle_angle_c* ont une forte corrélation croissante entre elles, except *Pitch_angle* qui montre une forte corrélation décroissante avec les variables associées aux température des composants des éoliennes et aux mesures liées à des composants en rotation comme *Generator_converter_speed*, *Generator_speed*, *Rotor_speed*;
+
+- les variables  "Generator_converter_speed", "Generator_speed", "Rotor_speed" sont corrélées positivement entre elles et négativement avec la variable *Pitch_angle*.
+
+Par ailleurs, on remarque que la variable cible *TARGET* a une forte corrélation croissante avec les variables *Generator_converter_speed*, *Generator_speed* et *Rotor_speed*; De plus, il présente aussi une corrélation croissante avec deux variables correspondantes aux températures des composants des éoliennes "Gearbox_bearing_1_temperature", "Gearbox_bearing_2_temperature" avec un coefficient de corrélation $\approx 0.57$.
+
+Remarquons que l'impact de la multicolinéarité sur le resultat analytique varie selon les problèmes spécifiques. Dans notre cas, nous décidons de conserver les variables candidates de manière rédhibitoire dans un premier temps, et reviendrons là-dessus si besoin.
+
+De toute manière, nous parlerons des outils qui nous permettent de traiter un problème de multicolinéarité en conclusion.
+
+#Régression linéaire sur le modèle complet 
+
+
+Nous allons ajuster le modèle complet par la méthode des moindres carrés sur l'échantillon d'apprentissage ("training").  
+
+
+```{r ajuste }
+lm.fit<-lm(TARGET~.,data=training)
+lm.summary<-summary(lm.fit);lm.summary
+```
+
+Calculons les valeurs ajustées par le modèle dans l'échantillon d'apprentissage.
+
+```{r,fig.cap="calcul des valeurs ajustees",echo=FALSE }
+lm.pred.train<-predict(lm.fit,training) 
+plot(training$TARGET,lm.pred.train) 
+abline(0,1,col="red")
+```
+
+
+**l'erreur d'ajustement**
+```{r err_ajuste_train}
+lm.ajust.err<-mean((training$TARGET-lm.pred.train)^2)
+lm.ajust.err
+```
+
+**Moyenne des erreurs absolues (MAE)**
+```{r MAE}
+mean(abs(training$TARGET-lm.pred.train))
+```
+
+#Sélection de variables
+
+**Recherche exhaustive**
+
+Il s'agit de déterminer le meilleur modèle parmi l'ensemble de tous les modèles.
+La fonction *regsubsets* permet de calculer les valeurs du $R^2$, $R^2_{aj}$, $C_p$,$BIC$ du meilleur modèle.
+
+```{r}
+library(leaps)
+regfit.full<-regsubsets(TARGET~.,data=training,nvmax=22)
+reg.summary<-summary(regfit.full)
+```
+
+```{r}
+#R²
+which.max(reg.summary$rsq)
+#R² ajusté
+which.max(reg.summary$adjr2)
+#Cp de mallows
+which.min(reg.summary$cp)
+#BIC
+which.min(reg.summary$bic)
+
+```
+
+On choisit en général un modèle plus petit et puisque BIC est le plus pénalisant parmi tous les critères de sélection, dans la suite du projet, nous allons travailler avec le modèle basé sur le BIC.
+
+```{r BIC,fig.cap="modeles basee sur le BIC",echo=F}
+plot(regfit.full,scale="bic")
+
+```
+
+
+Variables selectionnées par BIC
+```{r}
+bestBic<-which.min(reg.summary$bic)
+reg.summary$which[bestBic,] 
+
+```
+
+
+Récupérons les noms des variables sélectionnées.
+```{r }
+which(reg.summary$which[bestBic,]==TRUE)
+```
+
+Indices des variables selectionnées dans le tableau de données
+```{r IndBic }
+
+indBic<-which(reg.summary$which[bestBic,]==TRUE)[-1]-1 
+indBic
+```
+
+Noms des variables selectionnées par Bic
+```{r ModBic}
+modBic<-names(training)[indBic]
+modBic 
+```
+
+
+Ecriture du modèle sélectionné par BIC
+```{r fmlaBic }
+fmlaBic <- as.formula(paste("TARGET ~ ", paste(modBic, collapse= "+")))
+fmlaBic 
+```
+
+```{r }
+lm.fit.Bic<-lm(fmlaBic,data=training) 
+summary(lm.fit.Bic)$coef
+```
+
+On retrouve aussi ces coefficients parmi les résultats obtenus grâce à la fonction regsubsets.
+```{r }
+coef(regfit.full,id=bestBic) 
+```
+
+
+#Prédiction pour le modèle sélectionné par BIC sur l'échantillon test 
+
+
+##Traitement préliminaire des données de "input_testing"
+
+
+
+```{r chargement testing,include=FALSE}
+#chargement des donnees input_testing
+input_testing<-read_delim(file="input_testing.csv",col_names = TRUE, delim = ";")
+
+```
+La taille du jeu de données test "input_testing" est plus petite que celle des données d'apprentissage "training", `r nrow(input_testing)` observations.
+De plus, les variables contenant des valeurs manquantes sont toujours les mêmes que dans l'échantillon d'apprentissage.
+
+Par conséquent, nous traiterons les valeurs manquantes pour l'échantillon test de la même manière que pour les données d'apprentissage. 
+
+```{r ,include=FALSE}
+var_select1<-var_select[(-22)]
+input_testing<-input_testing%>%select(var_select1)
+```
+
+
+```{r traitement des valeurs manquantes}
+input_testing$Grid_voltage[is.na(
+  input_testing$Grid_voltage)]<-median(input_testing$Grid_voltage,na.rm=T)
+
+med_Generator_converter_speed_test<-median(
+  input_testing$Generator_converter_speed,na.rm=T) 
+input_testing$Generator_converter_speed[is.na(
+  input_testing$Generator_converter_speed)]<-med_Generator_converter_speed_test
+
+med_Gearbox_inlet_temperature_test<-median(
+  input_testing$Gearbox_inlet_temperature,na.rm=T) #médiane
+input_testing$Gearbox_inlet_temperature[is.na(
+  input_testing$Gearbox_inlet_temperature)]<-med_Gearbox_inlet_temperature_test 
+
+input_testing$Absolute_wind_direction_c[is.na(
+  input_testing$Absolute_wind_direction_c)]<-median(input_testing$Absolute_wind_direction_c,na.rm=T)
+
+input_testing$Nacelle_angle_c[is.na(
+  input_testing$Nacelle_angle_c)]<-median(input_testing$Nacelle_angle_c,na.rm=T)
+
+```
+
+**Vérification**
+
+```{r }
+summary(input_testing)
+```
+
+
+##Calcul des valeurs prédictes dans l'échantillon test
+```{r }
+#on prend l'ensemble des données test
+Bic.pred.test<-predict(lm.fit.Bic,input_testing) 
+write.csv(Bic.pred.test, file = "output_testing.csv")
+summary(Bic.pred.test)
+
+```
+
+Nous obtenons à la sortie du résultat un fichier nommé "output_testing" contenant les valeurs prédictes de la variable cible Y associée à la puissance active de quatre éoliennes dans l'échantillon test "input_testing".
+
+   
+Nous ne pouvions pas évaluer l'erreur de prédiction en raison de l'absence des vraies données associée à la  variable "TARGET".
+
+   
+    
+    
+       
+       
+#Conclusion
+
+En conclusion, nous voudrions résumer les difficultés rencontrées au cours de ce projet notamment avec notre jeu de données:
+
+*  Beaucoup de valeurs manquantes pour certaines variables comme *Grid_Voltage*, *Generator_converter_speed*, *Gearbox_inlet_temperature*;     
+Le choix de remplacer ces valeurs manquantes par les médianes n'est pas la meilleure façon, c'est une technique grossière. Il existe d'autres méthodes qui pourraient traiter ces données d'une manière meilleure;
+
+*  Beaucoup de variables qui expriment une signification répétitive au niveau des données: variables suffixées par '_max', '_min', '_std';
+
+*  Pas de variable cible ("TARGET") fournie en phase testing donc nous ne pouvons pas calculer l'erreur de prédiction afin d'optimiser le modèle;
+
+* Multicolinéarité entre variables: plusieurs outils sont habituellement utilisés, y compris, la réalisation de modèles alternatifs simplifiés, d'un modèle de régression pas-à-pas ou d'une analyse factorielle
+
+Ainsi, nous voulons lister quelques d'autres algorithmes de la régression que nous aurions pu explorer avec plus de temps, telles que:
+
+* Régression logistique: qui est un cas particulier de modèle linéaire généralisé largement utilisé en apprentissage automatique.
+
+* Forêt d'arbres décisionnels: qui effectue un apprentissage sur des multiples arbres de décision entraînés sur des sous-ensembles de données légèrement différents.
+
+
+#Pour aller polus loin
+
+On peut ajuster et prédire avec Ridge, LASSO ou elastic-net en utilisant le package glmnet (options alpha=0, ou alpha=1, ou 0<alpha<1). Cependant, il faut d'abord remplacer les prédicteurs qualitatifs (factor) par des "dummy" variables (1 indicatrice par niveau du facteur) et créer un objet de type matrice contenant les prédicteurs.
+
+
+Pour ces 3 méthodes, l'estimation des coefficients dépend du choix du paramètre $\lambda$.
+Intéressons-nous par exemple au Ridge (alpha=0).
+
+**Sélection de lambda**
+
+La fonction cv.glmnet permet de sélectionner à partir des données une valeur de lambda qui minimise un critère de validation croisée.
+```{r }
+xtraining<-model.matrix(TARGET~.,training)[,-1]
+ytraining<-training$TARGET
+library(glmnet)
+library(Matrix)
+library(foreach)
+cv.ridge.out<-cv.glmnet(x=xtraining,y=ytraining,alpha=0)
+```
+
+Visualisation de l'estimation par validation croisée de l'erreur quadratique en fonction de log(lambda)
+```{r }
+plot(cv.ridge.out) 
+```
+
+Valeur de lambda "optimale"
+```{r }
+bestlam.ridge<-cv.ridge.out$lambda.min
+bestlam.ridge 
+```
+
+**Ajustement et prediction pour le Ridge pour le lambda optimal**
+
+Ajustement sur données d'apprentissage
+```{r }
+ridge.mod<-glmnet(x=xtraining,y=ytraining,alpha=0,lambda=bestlam.ridge)
+```
+
+Estimation de bêta sur les données d'apprentissage
+```{r }
+ridge.mod$beta 
+
+```
+
+
+Dans cette méthode de régression pénalisée, afin de calculer les valeurs prédictes sur les données test, on a besoin l'ensemble des données test. Or dans notre cas d'étude, les vraies données pour la variable cible Y sont manquantes. On ne pourrait pas donc faire de la prédiction sur l'échantillon test, ainsi que l'erreur de prédiction.
+
+
+
+
+
+

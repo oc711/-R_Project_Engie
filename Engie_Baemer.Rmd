@@ -1,0 +1,256 @@
+---
+title: "Slides Partie Individuelle"
+subtitle: "Modéliser les données Engie avec Stepwise régression"
+author: "LI Dimeng"
+date: "Janvier 2019"
+institute: Sorbonne Université
+theme: Singapore
+fontsize: 10pt
+output:
+    beamer_presentation:
+      toc: yes
+---
+
+```{r global_options, include=FALSE}
+#position par défaut des figures dans le pdf : centrées et à l'endroit où on les construit
+library(magrittr) #pour utiliser l'opérateur pipe %>%
+library(kableExtra) #pour améliorer les tableaux
+library(readr)#pour la lecture des données
+library(psych)#ACP
+library(tidyverse)#pour l'analyse descriptive de base
+library(gridExtra)#pour partager la fenêtre graphique avec ggplot2
+```
+
+
+```{r chargement, include=FALSE}
+rm(list=ls()) #ATTENTION : efface tout l'environnement global
+input_training<-read.table(file="input_training.csv",header = TRUE, sep = ";")#chargement des donnees input_training
+
+output_training<-read.table(file="output_training.csv",header = TRUE, sep = ";")#chargement des donnees output_training
+output_training<-as.tibble(output_training) 
+```
+
+
+```{r fusionnement par ID,include=FALSE }
+n_input_training<-nrow(input_training) #taille de l'echantillon input_training
+n_out_training<-nrow(output_training) #taille de l'echantillon output_training
+training<-merge(input_training,output_training,by="ID")  
+summary(training)
+```
+
+```{r nettoyage, include=FALSE}
+var_select<-c("Pitch_angle","Hub_temperature","Generator_converter_speed",
+              "Generator_speed","Generator_bearing_1_temperature","Generator_bearing_2_temperature",
+              "Generator_stator_temperature","Gearbox_bearing_1_temperature","Gearbox_bearing_2_temperature",
+              "Gearbox_inlet_temperature","Gearbox_oil_sump_temperature","Nacelle_angle",
+              "Nacelle_temperature","Absolute_wind_direction","Outdoor_temperature","Grid_frequency",
+              "Grid_voltage","Rotor_speed","Rotor_bearing_temperature","Absolute_wind_direction_c",
+              "Nacelle_angle_c","TARGET")
+training<-training%>%select(var_select)
+training<-training%>%mutate_if(sapply(training,is.character),as.factor)
+colnames(training)#verification
+training<-as.tibble(training) #transformation du data.frame en tibble
+```
+
+```{r med_Grid_Voltage, include=F}
+med_Grid_Voltage<-median(training$Grid_voltage,na.rm=T) #médiane
+
+```
+
+```{r traitement de Grid_Voltage, include=F }
+training$Grid_voltage[is.na(training$Grid_voltage)]<-med_Grid_Voltage
+```
+
+```{r traitement de Generator_converter_speed, include=F }
+med_Generator_converter_speed <-median(training$Generator_converter_speed,na.rm=T)#médiane
+training$Generator_converter_speed[is.na(training$Generator_converter_speed)]<-med_Generator_converter_speed 
+```
+
+```{r traitement de Gearbox_inlet_temperature, include=F}
+med_Gearbox_inlet_temperature <-median(training$Gearbox_inlet_temperature,na.rm=T)#médiane
+training$Gearbox_inlet_temperature[is.na(training$Gearbox_inlet_temperature)]<-med_Gearbox_inlet_temperature 
+
+```
+
+```{r,include=FALSE }
+training<-training%>%
+  filter(!is.na(Absolute_wind_direction_c))
+training<-training%>%
+  filter(!is.na(Nacelle_angle_c))
+```
+
+```{r, echo=FALSE}
+train <- training[1:308657,]
+test <- training[308658:617314,]
+```
+
+```{r, include=FALSE }
+summary(train)
+summary(test)
+```
+
+#Etude préalable
+
+##Repris du jeu de données
+
+J'ai repris le jeu de données après les étapes de nettoyage et de recodage pour que je puisse démarrer directement sur la partie de modélisation.
+
+\bigskip
+Afin de pouvoir tester la validité du modèle, j'ai divisé le jeu de données en deux parties: train(50%) et test(50%). 
+
+- L'ensemble de données d'apprentissage **train** peut être utilisé pour s'adapter au modèle     
+   Il contient `r nrow(train)` observations et `r ncol(train)` variables.
+
+- L'ensemble de données de **test** est réservé pour faire un test de validité du modèle.     
+   Il contient aussi `r nrow(test)` observations et `r ncol(test)` variables.
+
+----
+
+#L’ANALYSE EN COMPOSANTES PRINCIPALES(ACP)
+
+\tiny 
+Partant des recherches précédentes, je sais que ce jeu de données a un problème de multicolinéarité,   
+Afin d'eviter ce probleme, j'ai décidé de faire une analyse en composantes principales(ACP) avant de passer à la modélisation
+
+La valeur *ss loading* >1 signifie que le composant interprète la variabilité de la valeur d'au moins une variable, donc le composant principal dont *ss loading* >1 doit être conservé, de sorte que nous avons 4 composants principaux qui doivent être préservés
+
+
+```{r,include=FALSE}
+train_acp<-principal(train, nfactors=8, rotate="none") 
+```
+
+```{r,echo=FALSE}
+train_acp$loadings
+```
+----
+
+
+Nous pouvons aussi vérifier ce fait avec le graphe **Cattell**   
+Les principales composantes supérieures au maximum des modifications graphiques sont conservées.   
+```{r figure1,fig.width=4,fig.height=3,fig.align ='center', fig.cap = "Test de Cattell",echo=FALSE}
+plot(train_acp$values,type="b")
+```
+
+----
+##Construction de modèle par les composantes principales
+
+```{r,include=FALSE}
+RC1 = - 0.852* train$Pitch_angle + 0.471 * train$Hub_temperature+ 0.767 * train$Generator_converter_speed
+      + 0.768 * train$Generator_speed + 0.856 * train$Generator_bearing_1_temperature
+      + 0.855 * train$Generator_bearing_2_temperature + 0.930 * train$Generator_stator_temperature
+      + 0.956 * train$Gearbox_bearing_1_temperature + 0.957 * train$Gearbox_bearing_2_temperature
+      + 0.879 * train$Gearbox_inlet_temperature + 0.95* train$Gearbox_oil_sump_temperature
+      + 0.599 * train$Nacelle_temperature 
+      + 0.389 * train$Outdoor_temperature 
+      + 0.054 * train$Grid_frequency + 0.767 * train$Rotor_speed
+      + 0.839 * train$Rotor_bearing_temperature
+     
+RC2 = + 0.260* train$Pitch_angle + 0.645 * train$Hub_temperature - 0.539 * train$Generator_converter_speed
+      - 0.543 * train$Generator_speed +0.290 * train$Generator_bearing_1_temperature
+      + 0.392 * train$Generator_bearing_2_temperature 
+      - 0.200 * train$Gearbox_bearing_1_temperature - 0.213 * train$Gearbox_bearing_2_temperature
+      + 0.2 * train$Gearbox_inlet_temperature 
+      + 0.419 * train$Nacelle_angle + 0.642 * train$Nacelle_temperature 
+      + 0.414 * train$Absolute_wind_direction + 0.681 * train$Outdoor_temperature -0.163 * train$Grid_voltage
+      + 0.314 * train$Rotor_bearing_temperature  -0.544* train$Rotor_speed + 0.414*train$Absolute_wind_direction_c
+      + 0.419 * train$Nacelle_angle_c 
+
+RC3 = - 0.301 * train$Hub_temperature + 0.229 * train$Generator_converter_speed
+      + 0.233 * train$Generator_speed -0.161 * train$Generator_bearing_1_temperature
+      - 0.214 * train$Generator_bearing_2_temperature -0.101*train$Gearbox_inlet_temperature 
+      + 0.862 * train$Nacelle_angle - 0.321 * train$Nacelle_temperature 
+      + 0.864 * train$Absolute_wind_direction -0.324 * train$Outdoor_temperature
+      -0.152 * train$Rotor_bearing_temperature +0.233* train$Rotor_speed + 0.864*train$Absolute_wind_direction_c
+      + 0.862 * train$Nacelle_angle_c 
+
+RC4 = 0.169* train$Hub_temperature+0.147* train$Outdoor_temperature+0.770*train$Grid_frequency+0.765* train$Grid_voltage
+```
+
+Nous pouvons donc construire un modèle de régression tel que: TARGET ~ RC1+RC2+RC3+RC4
+
+```{r,echo=FALSE}
+lm.fits<-lm(TARGET~RC1+RC2+RC3+RC4,data=train)
+summary(lm.fits)
+```
+
+----
+
+#Stepwise regression
+
+##La méthodologie
+
+Il existe trois modes de fonctionnement spécifiques:  
+
+- **Backward elimination**: qui tente d'avoir toutes les variables possibles afin de ne rien ignorer.
+- **Forward selection**: procéde dans le sens inverse de la méthode *Backward elimination*.
+- **Bidirectional elimination**: la combinaison des deux
+
+\tiny 
+```{r,echo=FALSE}
+lm.step.both <- step(lm.fits,direction="both")
+lm.step.both
+```
+
+
+#Evaluation de la validité du modèle
+
+##Les Graphes
+
+```{r figure2,out.width='80%', fig.cap = "Evaluation du modele",echo=FALSE}
+par(mfrow=c(2,2))
+plot(lm.step.both)
+```
+
+----
+
+##Explications liées aux graphes
+
+
+**Graphe 1 - Residuals vs Fitted plot**
+
+Sur cette figure, l’axe horizontal représente la valeur y (valeur ajustée) et l’axe vertical représente le résidu (résidus). Dans cette image, nous voulons voir que la distribution des résidus est relativement uniforme, ce qui signifie que la distribution des erreurs est conforme à la condition de Guaasian-Markov. Si le résidu a tendance à augmenter ou à diminuer avec l'augmentation de la valeur y ou bien la distribution des résidus est plus similaire à une courbe quadratique, cela implique que les données peuvent ne pas être linéaires.   
+À ce stade, vous pouvez effectuer certaines transformations, telles que la recherche du log, la recherche de l'index et la recherche de la racine carrée avant de passer à la régression.
+
+----
+
+**Graphe 2 - Quantile-Quantile plot**
+Le graphe Q-Q compare les deux quantiles distribués pour déterminer si les deux distributions sont similaires. 
+L’effet de ce graphique est de vérifier si l’erreur est sujette à une distribution normale. 
+Si c'est le cas, le point sur cette image sera proche de la ligne y = x
+
+**Graphe 3 - Scale-Location plot**
+
+Cette image est principalement la même que le graphe 2, mais avec des résidus standardisés. 
+La plage de la distribution des erreurs peut être vue plus facilement.
+
+**Graphe 4 - Residuals vs Leverage plot**
+Cette image est la figure la plus utile pour juger des points d'échantillonnage isolés (Leverage point)
+
+----
+
+##Erreur de prédiction
+
+```{r test,echo=FALSE}
+test.pred<-predict(lm.step.both,test) #on prend l'ensemble des donnees test
+test.pred.err<-mean((test$TARGET-test.pred)^2)
+test.pred.err
+```
+
+
+Nous constatons que l'erreur de prédiction reste relativement grande en passant par un modèle simple comme un modèle de regréssion.
+
+
+----
+
+#Difficultés rencontrées
+
+En raison de la multicolinéarité de ce jeu de données, il est difficile d'obtenir un bon modèle par des algorithmes de régression. J'ai aussi essayé d'autres algorithmes telles que:
+
+
+- randomForest: (library **randomForest**): 
+  mais pour ce faire, il demande une allocation de mémoire supérieur à la capacité de ma machine, donc j'ai eu le message d'erreur: *cannot allocate vector of size 3.7 Gb*
+
+- Decision tree: (library **c50**): 
+  de même, j'ai eu le message d'erreur: *unable to allocate sufficient memory,Error limit exceeded*
+  
+Finalement je ne pouvais que chercher un bon algorithme de régression pour réaliser ce projet. Toutefois, si les conditions physiques le permettent, je souhaite également appliquer les autres algorithmes mentionnés ci-dessus.
